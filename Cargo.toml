@@ -1,8 +1,8 @@
 [package]
 
 name = "hueclient"
-version = "0.4.3-alpha.0"
-authors = ["Mathieu Poumeyrol <kali@zoy.org>"]
+version = "0.5.0-alpha.0"
+authors = ["Mathieu Poumeyrol <kali@zoy.org>", "dce"]
 description = "Rust library for Philips Hue lights"
 homepage = "http://github.com/kali/hue.rs"
 repository = "http://github.com/kali/hue.rs"

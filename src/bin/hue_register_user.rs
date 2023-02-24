@@ -16,7 +16,7 @@ fn main() {
             match r {
                 Ok(r) => {
                     eprint!("done: ");
-                    println!("{}", r.username);
+                    println!("{}", r.username.as_ref().unwrap());
                     break;
                 }
                 Err(HueError::BridgeError { code, .. }) if code == 101 => {

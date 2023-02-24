@@ -3,6 +3,8 @@ use serde_json::Value;
 use std::collections::HashMap;
 use std::str::FromStr;
 
+use std::marker::PhantomData;
+
 #[derive(Debug, Copy, Clone, Serialize, Deserialize)]
 pub struct GroupState {
     pub all_on: bool,
@@ -162,28 +164,59 @@ impl CommandLight {
     }
 }
 
-/// An unauthenticated bridge is a bridge that has not
 #[derive(Debug, Clone)]
-pub struct UnauthBridge {
+pub struct Unauthed;
+#[derive(Debug, Clone)]
+pub struct Authed;
+
+
+/// The bridge is the central access point of the lamps in a Hue setup, and also the central access
+/// point of this library.
+/// A bridge can be authenticated or unauthenticated
+#[derive(Debug, Clone)]
+pub struct Bridge<State = Unauthed> {
     /// The IP-address of the bridge.
     pub ip: std::net::IpAddr,
+    /// This is the username of the currently logged in user.
+    pub username: Option<String>,
     pub(self) client: reqwest::blocking::Client,
+    state: PhantomData<State>,
 }
 
-impl UnauthBridge {
+impl Bridge<Unauthed> {
+    /// Create a bridge at this IP. If you know the IP-address, this is the fastest option. Note
+    /// that this function does not validate whether a bridge is really present at the IP-address.
+    /// ### Example
+    /// ```no_run
+    /// let bridge = hueclient::Bridge::for_ip([192u8, 168, 0, 4]);
+    /// ```
+    pub fn for_ip(ip: impl Into<std::net::IpAddr>) -> Bridge<Unauthed> {
+        Bridge {
+            ip: ip.into(),
+            client: reqwest::blocking::Client::new(),
+            username: None,
+            state: PhantomData::<Unauthed>,
+        }
+    }
+
     /// Consumes the bridge and returns a new one with a configured username.
     /// ### Example
     /// ```no_run
     /// let bridge = hueclient::Bridge::for_ip([192u8, 168, 0, 4])
     ///     .with_user("rVV05G0i52vQMMLn6BK3dpr0F3uDiqtDjPLPK2uj");
     /// ```
-    pub fn with_user(self, username: impl Into<String>) -> Bridge {
+    pub fn with_user(self, username: impl Into<String>) -> Bridge<Authed> {
         Bridge {
             ip: self.ip,
-            username: username.into(),
+            username: Some(username.into()),
             client: self.client,
+            state: std::marker::PhantomData::<Authed>,
         }
     }
+
+
+
+
 
     /// This function registers a new user at the provided brige, using `devicetype` as an
     /// identifier for that user. It returns an error if the button of the bridge was not pressed
@@ -194,7 +227,7 @@ impl UnauthBridge {
     /// let password = bridge.register_user("mylaptop").unwrap();
     /// // now this password can be stored and reused
     /// ```
-    pub fn register_user(self, devicetype: &str) -> crate::Result<Bridge> {
+    pub fn register_user(self, devicetype: &str) -> crate::Result<Bridge<Authed>> {
         #[derive(Serialize)]
         struct PostApi {
             devicetype: String,
@@ -213,35 +246,10 @@ impl UnauthBridge {
 
         Ok(Bridge {
             ip: self.ip,
-            username: resp.success.username,
+            username: Some(resp.success.username),
             client: self.client,
+            state: PhantomData::<Authed>,
         })
-    }
-}
-
-/// The bridge is the central access point of the lamps is a Hue setup, and also the central access
-/// point of this library.
-#[derive(Debug)]
-pub struct Bridge {
-    /// The IP-address of the bridge.
-    pub ip: std::net::IpAddr,
-    /// This is the username of the currently logged in user.
-    pub username: String,
-    pub(self) client: reqwest::blocking::Client,
-}
-
-impl Bridge {
-    /// Create a bridge at this IP. If you know the IP-address, this is the fastest option. Note
-    /// that this function does not validate whether a bridge is really present at the IP-address.
-    /// ### Example
-    /// ```no_run
-    /// let bridge = hueclient::Bridge::for_ip([192u8, 168, 0, 4]);
-    /// ```
-    pub fn for_ip(ip: impl Into<std::net::IpAddr>) -> UnauthBridge {
-        UnauthBridge {
-            ip: ip.into(),
-            client: reqwest::blocking::Client::new(),
-        }
     }
 
     /// Scans the current network for Bridges, and if there is at least one, returns the first one
@@ -250,12 +258,14 @@ impl Bridge {
     /// ```no_run
     /// let maybe_bridge = hueclient::Bridge::discover();
     /// ```
-    pub fn discover() -> Option<UnauthBridge> {
+    pub fn discover() -> Option<Bridge<Unauthed>> {
         crate::disco::discover_hue_bridge()
             .ok()
-            .map(|ip| UnauthBridge {
+            .map(|ip| Bridge {
                 ip,
                 client: reqwest::blocking::Client::new(),
+                username: None,
+                state: PhantomData::<Unauthed>,
             })
     }
 
@@ -266,24 +276,15 @@ impl Bridge {
     /// ```
     /// ### Panics
     /// This function panics if there is no brige present.
-    pub fn discover_required() -> UnauthBridge {
+    pub fn discover_required() -> Bridge<Unauthed> {
         Self::discover().expect("No bridge found!")
     }
 
-    /// Consumes the bidge and return a new one with a configured username.
-    /// ### Example
-    /// ```no_run
-    /// let bridge = hueclient::Bridge::for_ip([192u8, 168, 0, 4])
-    ///    .with_user("rVV05G0i52vQMMLn6BK3dpr0F3uDiqtDjPLPK2uj");
-    /// ```
-    pub fn with_user(self, username: impl Into<String>) -> Bridge {
-        Bridge {
-            ip: self.ip,
-            username: username.into(),
-            client: self.client,
-        }
-    }
+}
 
+
+impl Bridge<Authed> {
+    /// Idk if it makes sense to register user on authed Bridge?
     /// This function registers a new user at the provided brige, using `devicetype` as an
     /// identifier for that user. It returns an error if the button of the bridge was not pressed
     /// shortly before running this function.
@@ -295,7 +296,7 @@ impl Bridge {
     /// // now this username d can be stored and reused
     /// println!("the password was {}", bridge.username);
     /// ```
-    pub fn register_user(self, devicetype: &str) -> crate::Result<Bridge> {
+    pub fn register_user(self, devicetype: &str) -> crate::Result<Bridge<Authed>> {
         #[derive(Serialize)]
         struct PostApi {
             devicetype: String,
@@ -314,8 +315,9 @@ impl Bridge {
 
         Ok(Bridge {
             ip: self.ip,
-            username: resp.success.username,
+            username: Some(resp.success.username),
             client: self.client,
+            state: PhantomData::<Authed>,
         })
     }
 
@@ -330,7 +332,11 @@ impl Bridge {
     /// }
     /// ```
     pub fn get_all_lights(&self) -> crate::Result<Vec<IdentifiedLight>> {
-        let url = format!("http://{}/api/{}/lights", self.ip, self.username);
+        let url = format!(
+            "http://{}/api/{}/lights",
+            self.ip,
+            self.username.as_ref().unwrap()
+        );
         type Resp = BridgeResponse<HashMap<String, Light>>;
         let resp: Resp = self.client.get(&url).send()?.json()?;
         let mut lights = vec![];
@@ -354,7 +360,8 @@ impl Bridge {
     /// }
     /// ```
     pub fn get_all_groups(&self) -> crate::Result<Vec<IdentifiedGroup>> {
-        let url = format!("http://{}/api/{}/groups", self.ip, self.username);
+        let usernamestring = &self.username.clone().unwrap();
+        let url = format!("http://{}/api/{}/groups", self.ip, usernamestring);
         type Resp = BridgeResponse<HashMap<String, Group>>;
         let resp: Resp = self.client.get(&url).send()?.json()?;
         let mut groups = vec![];
@@ -378,7 +385,11 @@ impl Bridge {
     /// }
     /// ```
     pub fn get_all_scenes(&self) -> crate::Result<Vec<IdentifiedScene>> {
-        let url = format!("http://{}/api/{}/scenes", self.ip, self.username);
+        let url = format!(
+            "http://{}/api/{}/scenes",
+            self.ip,
+            self.username.as_ref().unwrap()
+        );
         type Resp = BridgeResponse<HashMap<String, Scene>>;
         let resp: Resp = self.client.get(&url).send()?.json()?;
         let mut scenes = vec![];
@@ -393,7 +404,11 @@ impl Bridge {
     }
 
     pub fn set_scene(&self, scene: String) -> crate::Result<Value> {
-        let url = format!("http://{}/api/{}/groups/0/action", self.ip, self.username);
+        let url = format!(
+            "http://{}/api/{}/groups/0/action",
+            self.ip,
+            self.username.as_ref().unwrap()
+        );
         let command = CommandLight::default().scene(scene);
         let resp: BridgeResponse<Value> = self.client.put(&url).json(&command).send()?.json()?;
         resp.get()
@@ -402,7 +417,9 @@ impl Bridge {
     pub fn set_group_state(&self, group: usize, command: &CommandLight) -> crate::Result<Value> {
         let url = format!(
             "http://{}/api/{}/groups/{}/action",
-            self.ip, self.username, group
+            self.ip,
+            self.username.as_ref().unwrap(),
+            group
         );
         let resp: BridgeResponse<Value> = self.client.put(&url).json(command).send()?.json()?;
         resp.get()
@@ -411,7 +428,9 @@ impl Bridge {
     pub fn set_light_state(&self, light: usize, command: &CommandLight) -> crate::Result<Value> {
         let url = format!(
             "http://{}/api/{}/lights/{}/state",
-            self.ip, self.username, light
+            self.ip,
+            self.username.as_ref().unwrap(),
+            light
         );
         let resp: BridgeResponse<Value> = self.client.put(&url).json(command).send()?.json()?;
         resp.get()
